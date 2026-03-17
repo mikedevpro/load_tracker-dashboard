@@ -1,23 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
 } from "recharts";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const API = (import.meta.env.VITE_API_URL || "https://load-tracker-db.onrender.com").replace(/\/$/, "");
 
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
     ...options,
   });
 
-  // Try to parse JSON when possible
   const contentType = res.headers.get("content-type") || "";
-  const data = contentType.includes("application/json") ? await res.json().catch(() => null) : null;
+  const data = contentType.includes("application/json")
+    ? await res.json().catch(() => null)
+    : null;
 
   if (!res.ok) {
-    const msg = data?.error || data?.errors?.join(", ") || `${res.status} ${res.statusText}`;
+    const msg =
+      data?.error ||
+      data?.errors?.join(", ") ||
+      `${res.status} ${res.statusText}`;
     const err = new Error(msg);
     err.status = res.status;
     err.data = data;
@@ -87,7 +94,13 @@ function Button({ children, onClick, type = "button", disabled, variant = "defau
     opacity: disabled ? 0.65 : 1,
   };
   return (
-    <button type={type} onClick={onClick} disabled={disabled} style={style}>
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      aria-busy={disabled || undefined}
+      style={style}
+    >
       {children}
     </button>
   );
@@ -182,10 +195,10 @@ function LoginPanel({ onLoggedIn }) {
         </Button>
 
         <div style={{ display: "flex", gap: 10 }}>
-          <Button onClick={() => { setEmail("dispatcher@test.com"); setPassword("password"); }}>
+          <Button disabled={loading} onClick={() => { setEmail("dispatcher@test.com"); setPassword("password"); }}>
             Use dispatcher demo
           </Button>
-          <Button onClick={() => { setEmail("driver@test.com"); setPassword("password"); }}>
+          <Button disabled={loading} onClick={() => { setEmail("driver@test.com"); setPassword("password"); }}>
             Use driver demo
           </Button>
         </div>
@@ -199,6 +212,7 @@ function LoginPanel({ onLoggedIn }) {
 }
 
 export default function App() {
+  const activeRequests = useRef(0);
   const [authed, setAuthed] = useState(false);
   const [role, setRole] = useState(null);
   const [dashboard, setDashboard] = useState(null);
@@ -226,6 +240,7 @@ export default function App() {
   });
 
   async function appFetch(path, options = {}) {
+    activeRequests.current += 1;
     setLoading(true);
     try {
       return await apiFetch(path, options);
@@ -233,12 +248,17 @@ export default function App() {
       setToast(e.message);
       throw e;
     } finally {
-      setLoading(false);
+      activeRequests.current -= 1;
+      setLoading(activeRequests.current > 0);
     }
   }
 
   async function fetchLoads(customPath = null) {
-    const path = customPath || `/loads?${new URLSearchParams({ ...(q ? { q } : {}), ...(status ? { status } : {}) }).toString()}`;
+    const query = new URLSearchParams({
+      ...(q ? { q } : {}),
+      ...(status ? { status } : {}),
+    });
+    const path = customPath || `/loads${query.toString() ? `?${query.toString()}` : ""}`;
     const data = await appFetch(path);
     setLoads(data || []);
   }
@@ -399,6 +419,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, status, authed]);
 
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 5000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   const statusData = useMemo(() => {
     if (!dashboard?.breakdowns?.by_status) return [];
     return Object.entries(dashboard.breakdowns.by_status).map(([name, count]) => ({ name, count }));
@@ -432,8 +458,8 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Badge>Role: <b style={{ marginLeft: 6 }}>{role || "—"}</b></Badge>
             {loading ? <Badge>Loading…</Badge> : null}
-            <Button onClick={refreshAll}>Refresh</Button>
-            <Button onClick={logout}>Logout</Button>
+            <Button disabled={loading} onClick={refreshAll}>Refresh</Button>
+            <Button disabled={loading} onClick={logout}>Logout</Button>
           </div>
         </div>
 
@@ -489,7 +515,7 @@ export default function App() {
                     <option value="canceled">canceled</option>
                   </Select>
 
-                  <Button onClick={() => fetchLoads("/loads/active")}>Show active loads</Button>
+                  <Button disabled={loading} onClick={() => fetchLoads("/loads/active")}>Show active loads</Button>
                   <Button onClick={() => { setQ(""); setStatus(""); }}>Clear filters</Button>
                 </div>
               </div>
@@ -503,8 +529,8 @@ export default function App() {
               You only see loads assigned to your driver account.
             </p>
             <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-              <Button onClick={() => fetchLoads("/loads/active")}>Show my active loads</Button>
-              <Button onClick={() => fetchLoads()}>Show all my loads</Button>
+              <Button disabled={loading} onClick={() => fetchLoads("/loads/active")}>Show my active loads</Button>
+              <Button disabled={loading} onClick={() => fetchLoads()}>Show all my loads</Button>
             </div>
           </div>
         )}
@@ -554,7 +580,7 @@ export default function App() {
         <div style={{ marginTop: 14, background: "white", border: "1px solid #e5e7eb", borderRadius: 16, padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h2 style={{ margin: 0, fontSize: 16 }}>Loads</h2>
-            <Button onClick={() => fetchLoads()}>Refresh loads</Button>
+            <Button disabled={loading} onClick={() => fetchLoads()}>Refresh loads</Button>
           </div>
 
           <div style={{ overflowX: "auto", marginTop: 10 }}>
@@ -576,6 +602,15 @@ export default function App() {
                   <tr
                     key={l.id}
                     onClick={() => openLoad(l.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openLoad(l.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open load ${l.reference_number}`}
                     style={{ borderBottom: "1px solid #f3f4f6", cursor: "pointer" }}
                   >
                     <td style={{ padding: 10, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{l.reference_number}</td>
@@ -633,8 +668,8 @@ export default function App() {
                 </div>
 
                 <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
-                  <Button variant="primary" onClick={addStatusEvent}>Save status</Button>
-                  <Button onClick={refreshSelectedLoad}>Refresh</Button>
+                  <Button disabled={loading} variant="primary" onClick={addStatusEvent}>Save status</Button>
+                  <Button disabled={loading} onClick={refreshSelectedLoad}>Refresh</Button>
                 </div>
 
                 <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
@@ -666,7 +701,11 @@ export default function App() {
         ) : null}
 
         {toast ? (
-          <div style={{ position: "fixed", top: 16, right: 16, background: "white", border: "1px solid #e5e7eb", borderRadius: 14, padding: "10px 12px", boxShadow: "0 10px 25px rgba(0,0,0,0.08)" }}>
+          <div
+            role="status"
+            aria-live="polite"
+            style={{ position: "fixed", top: 16, right: 16, background: "white", border: "1px solid #e5e7eb", borderRadius: 14, padding: "10px 12px", boxShadow: "0 10px 25px rgba(0,0,0,0.08)" }}
+          >
             <div style={{ fontSize: 13 }}>{toast}</div>
             <div style={{ marginTop: 8 }}><Button onClick={() => setToast("")}>Close</Button></div>
           </div>
