@@ -4,6 +4,7 @@ import {
 } from "recharts";
 
 const API = (import.meta.env.VITE_API_URL || "https://load-tracker-db.onrender.com").replace(/\/$/, "");
+const USE_API_CREDENTIALS = import.meta.env.VITE_API_CREDENTIALS !== "false";
 
 function toList(data) {
   if (Array.isArray(data)) return data;
@@ -15,9 +16,15 @@ function toList(data) {
   return [];
 }
 
+function hasLoadsShape(data) {
+  if (Array.isArray(data)) return true;
+  if (!data || typeof data !== "object") return false;
+  return Array.isArray(data.data) || Array.isArray(data.loads);
+}
+
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
-    credentials: "include",
+    credentials: USE_API_CREDENTIALS ? "include" : "omit",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
@@ -149,6 +156,32 @@ function Select(props) {
   );
 }
 
+function SkeletonCell() {
+  return <div style={{ height: 14, borderRadius: 999, background: "#e5e7eb", width: "85%" }} />;
+}
+
+function getToastTheme(message) {
+  const isLoadPayloadWarning =
+    (message || "").includes("No data returned from /loads.") ||
+    (message || "").includes("unexpected payload for /loads.");
+
+  if (!isLoadPayloadWarning) {
+    return {
+      background: "white",
+      border: "#e5e7eb",
+      color: "#111827",
+      title: "Notice",
+    };
+  }
+
+  return {
+    background: "#fffbeb",
+    border: "#f59e0b",
+    color: "#92400e",
+    title: "Warning",
+  };
+}
+
 function LoginPanel({ onLoggedIn }) {
   const [email, setEmail] = useState("dispatcher@test.com");
   const [password, setPassword] = useState("password");
@@ -197,6 +230,9 @@ function LoginPanel({ onLoggedIn }) {
         <div>
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Password</div>
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" />
+          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>
+            Demo password (dispatcher + driver): <strong>password</strong>
+          </div>
         </div>
 
         {err ? <div style={{ color: "#b91c1c", fontSize: 13 }}>{err}</div> : null}
@@ -232,6 +268,8 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [banner, setBanner] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadsLoading, setLoadsLoading] = useState(false);
+  const [loadsIssue, setLoadsIssue] = useState("");
   const [toast, setToast] = useState("");
   const [selectedLoad, setSelectedLoad] = useState(null);
   const [statusNote, setStatusNote] = useState("");
@@ -265,13 +303,30 @@ export default function App() {
   }
 
   async function fetchLoads(customPath = null) {
+    setLoadsLoading(true);
     const query = new URLSearchParams({
       ...(q ? { q } : {}),
       ...(status ? { status } : {}),
     });
     const path = customPath || `/loads${query.toString() ? `?${query.toString()}` : ""}`;
-    const data = await appFetch(path);
-    setLoads(toList(data));
+    try {
+      const data = await appFetch(path);
+      if (data === null || data === undefined) {
+        const message = "No data returned from /loads.";
+        setLoadsIssue(message);
+        setToast(message);
+      } else if (!hasLoadsShape(data)) {
+        const message = "API returned an unexpected payload for /loads. Check response format in API logs.";
+        setLoadsIssue(message);
+        setToast(message);
+      } else {
+        if (loadsIssue) setToast("");
+        setLoadsIssue("");
+      }
+      setLoads(toList(data));
+    } finally {
+      setLoadsLoading(false);
+    }
   }
 
   async function fetchLookups() {
@@ -412,7 +467,13 @@ export default function App() {
       try {
         await refreshAll();
         setAuthed(true);
-      } catch {
+      } catch (error) {
+        const message = error?.message || "";
+        setBanner(
+          message.includes("Failed to fetch")
+            ? "Cannot reach the API. Check API URL, CORS, and that the backend is running."
+            : "Could not restore your session. Please sign in again."
+        );
         setAuthed(false);
         setRole(null);
         setDashboard(null);
@@ -443,15 +504,31 @@ export default function App() {
 
   if (!authed) {
     return (
-      <LoginPanel
-        onLoggedIn={async () => {
-          setDashboard(null);
-          setRole(null);
-          setSelectedLoad(null);
-          await refreshAll();
-          setAuthed(true);
-        }}
-      />
+      <>
+        {banner ? (
+          <div style={{
+            maxWidth: 420,
+            margin: "24px auto 0",
+            padding: 12,
+            borderRadius: 14,
+            border: "1px solid #fca5a5",
+            background: "#fee2e2",
+            color: "#991b1b",
+          }}>
+            {banner}
+          </div>
+        ) : null}
+        <LoginPanel
+          onLoggedIn={async () => {
+            setDashboard(null);
+            setRole(null);
+            setSelectedLoad(null);
+            setBanner("");
+            await refreshAll();
+            setAuthed(true);
+          }}
+        />
+      </>
     );
   }
 
@@ -609,34 +686,57 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {loads.map((l) => (
-                  <tr
-                    key={l.id}
-                    onClick={() => openLoad(l.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        openLoad(l.id);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Open load ${l.reference_number}`}
-                    style={{ borderBottom: "1px solid #f3f4f6", cursor: "pointer" }}
-                  >
-                    <td style={{ padding: 10, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{l.reference_number}</td>
-                    <td style={{ padding: 10 }}><StatusPill status={l.status} /></td>
-                    <td style={{ padding: 10 }}>{l.pickup_date}</td>
-                    <td style={{ padding: 10 }}>{l.origin_city}</td>
-                    <td style={{ padding: 10 }}>{l.dest_city}</td>
-                    <td style={{ padding: 10 }}>{l.customer?.name ?? "—"}</td>
-                    <td style={{ padding: 10 }}>{l.driver?.name ?? "—"}</td>
-                    <td style={{ padding: 10 }}>${Number(l.rate ?? 0).toFixed(0)}</td>
+                {loadsLoading ? (
+                  <>
+                    {Array.from({ length: 6 }).map((_, idx) => (
+                      <tr key={`skeleton-${idx}`}>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                        <td style={{ padding: 10 }}><SkeletonCell /></td>
+                      </tr>
+                    ))}
+                  </>
+                ) : loadsIssue ? (
+                  <tr>
+                    <td colSpan="8" style={{ padding: 14, color: "#92400e", background: "#fffbeb" }}>{loadsIssue}</td>
                   </tr>
-                ))}
-                {loads.length === 0 ? (
-                  <tr><td colSpan="8" style={{ padding: 14, color: "#6b7280" }}>No loads match your filters.</td></tr>
-                ) : null}
+                ) : (
+                  <>
+                    {loads.map((l) => (
+                      <tr
+                        key={l.id}
+                        onClick={() => openLoad(l.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openLoad(l.id);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open load ${l.reference_number}`}
+                        style={{ borderBottom: "1px solid #f3f4f6", cursor: "pointer" }}
+                      >
+                        <td style={{ padding: 10, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{l.reference_number}</td>
+                        <td style={{ padding: 10 }}><StatusPill status={l.status} /></td>
+                        <td style={{ padding: 10 }}>{l.pickup_date}</td>
+                        <td style={{ padding: 10 }}>{l.origin_city}</td>
+                        <td style={{ padding: 10 }}>{l.dest_city}</td>
+                        <td style={{ padding: 10 }}>{l.customer?.name ?? "—"}</td>
+                        <td style={{ padding: 10 }}>{l.driver?.name ?? "—"}</td>
+                        <td style={{ padding: 10 }}>${Number(l.rate ?? 0).toFixed(0)}</td>
+                      </tr>
+                    ))}
+                    {loads.length === 0 ? (
+                      <tr><td colSpan="8" style={{ padding: 14, color: "#6b7280" }}>No loads match your filters.</td></tr>
+                    ) : null}
+                  </>
+                )}
               </tbody>
             </table>
           </div>
@@ -712,14 +812,23 @@ export default function App() {
         ) : null}
 
         {toast ? (
+          (() => {
+            const theme = getToastTheme(toast);
+            return (
           <div
             role="status"
             aria-live="polite"
-            style={{ position: "fixed", top: 16, right: 16, background: "white", border: "1px solid #e5e7eb", borderRadius: 14, padding: "10px 12px", boxShadow: "0 10px 25px rgba(0,0,0,0.08)" }}
+            style={{
+              position: "fixed", top: 16, right: 16, background: theme.background,
+              border: `1px solid ${theme.border}`, borderRadius: 14, padding: "10px 12px", boxShadow: "0 10px 25px rgba(0,0,0,0.08)", color: theme.color
+            }}
           >
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{theme.title}</div>
             <div style={{ fontSize: 13 }}>{toast}</div>
             <div style={{ marginTop: 8 }}><Button onClick={() => setToast("")}>Close</Button></div>
           </div>
+            );
+          })()
         ) : null}
       </div>
     </div>
