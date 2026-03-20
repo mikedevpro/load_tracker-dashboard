@@ -41,7 +41,7 @@ Set to `false` if the deployment host blocks/stops cookie-based sessions.
 `VITE_REQUIRE_AUTH` controls whether authentication is enforced in the UI.
 
 - `VITE_REQUIRE_AUTH=true`: keep the sign-in flow enabled.
-- `VITE_REQUIRE_AUTH=false`: skip the login requirement (default in this repo).
+- `VITE_REQUIRE_AUTH=false`: skip the login requirement.
 
 Deployment checklist:
 
