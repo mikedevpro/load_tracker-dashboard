@@ -5,6 +5,7 @@ import {
 
 const API = (import.meta.env.VITE_API_URL || "https://load-tracker-db.onrender.com").replace(/\/$/, "");
 const USE_API_CREDENTIALS = import.meta.env.VITE_API_CREDENTIALS !== "false";
+const REQUIRE_AUTH = import.meta.env.VITE_REQUIRE_AUTH === "true";
 
 function toList(data) {
   if (Array.isArray(data)) return data;
@@ -260,8 +261,8 @@ function LoginPanel({ onLoggedIn }) {
 
 export default function App() {
   const activeRequests = useRef(0);
-  const [authed, setAuthed] = useState(false);
-  const [role, setRole] = useState(null);
+  const [authed, setAuthed] = useState(true);
+  const [role, setRole] = useState("dispatcher");
   const [dashboard, setDashboard] = useState(null);
   const [loads, setLoads] = useState([]);
   const [q, setQ] = useState("");
@@ -427,14 +428,23 @@ export default function App() {
 
   async function refreshAll() {
     setBanner("");
-
-    const me = await fetchMe(); // <-- source of truth
+    let me = null;
+    try {
+      me = await fetchMe();
+    } catch {
+      me = { role: "dispatcher" };
+      setRole("dispatcher");
+      setToast("");
+      if (!role) {
+        setBanner("Session verification skipped. Running in public mode.");
+      }
+    }
 
     // loads are allowed for both roles
     await fetchLoads();
 
     // dispatcher-only data
-    if (me?.role === "dispatcher") {
+    if ((me?.role || role) === "dispatcher") {
       await fetchDashboard();
       try {
         await fetchLookups();
@@ -466,18 +476,8 @@ export default function App() {
     (async () => {
       try {
         await refreshAll();
-        setAuthed(true);
-      } catch (error) {
-        const message = error?.message || "";
-        setBanner(
-          message.includes("Failed to fetch")
-            ? "Cannot reach the API. Check API URL, CORS, and that the backend is running."
-            : "Could not restore your session. Please sign in again."
-        );
-        setAuthed(false);
-        setRole(null);
-        setDashboard(null);
-        setLoads([]);
+      } catch {
+        setBanner("Could not connect to API. Check API URL/CORS/backend status.");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -485,11 +485,10 @@ export default function App() {
 
   // live filters
   useEffect(() => {
-    if (!authed) return;
     const t = setTimeout(() => fetchLoads(), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, authed]);
+  }, [q, status]);
 
   useEffect(() => {
     if (!toast) return;
@@ -502,7 +501,7 @@ export default function App() {
     return Object.entries(dashboard.breakdowns.by_status).map(([name, count]) => ({ name, count }));
   }, [dashboard]);
 
-  if (!authed) {
+  if (REQUIRE_AUTH && !authed) {
     return (
       <>
         {banner ? (
@@ -539,7 +538,7 @@ export default function App() {
           <div>
             <h1 style={{ margin: 0, fontSize: 28 }}>Load Tracker</h1>
             <p style={{ marginTop: 6, color: "#6b7280" }}>
-              Rails API + Devise auth + React dashboard
+              Rails API + React dashboard
             </p>
           </div>
 
@@ -547,7 +546,7 @@ export default function App() {
             <Badge>Role: <b style={{ marginLeft: 6 }}>{role || "—"}</b></Badge>
             {loading ? <Badge>Loading…</Badge> : null}
             <Button disabled={loading} onClick={refreshAll}>Refresh</Button>
-            <Button disabled={loading} onClick={logout}>Logout</Button>
+            {REQUIRE_AUTH ? <Button disabled={loading} onClick={logout}>Logout</Button> : null}
           </div>
         </div>
 

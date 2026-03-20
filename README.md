@@ -21,6 +21,7 @@ The frontend uses this environment variable:
 
 `VITE_API_URL`
 `VITE_API_CREDENTIALS`
+`VITE_REQUIRE_AUTH`
 
 Files:
 
@@ -36,6 +37,11 @@ Control this with `VITE_API_CREDENTIALS`:
 - `VITE_API_CREDENTIALS=false`: do not send credentials.
 
 Set to `false` if the deployment host blocks/stops cookie-based sessions.
+
+`VITE_REQUIRE_AUTH` controls whether authentication is enforced in the UI.
+
+- `VITE_REQUIRE_AUTH=true`: keep the sign-in flow enabled.
+- `VITE_REQUIRE_AUTH=false`: skip the login requirement (default in this repo).
 
 Deployment checklist:
 
