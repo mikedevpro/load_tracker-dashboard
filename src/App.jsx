@@ -5,10 +5,21 @@ import {
 
 const API = (import.meta.env.VITE_API_URL || "https://load-tracker-db.onrender.com").replace(/\/$/, "");
 
+function toList(data) {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== "object") return [];
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data.loads)) return data.loads;
+  if (Array.isArray(data.customers)) return data.customers;
+  if (Array.isArray(data.drivers)) return data.drivers;
+  return [];
+}
+
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
     credentials: "include",
     headers: {
+      Accept: "application/json",
       "Content-Type": "application/json",
       ...(options.headers || {}),
     },
@@ -151,7 +162,7 @@ function LoginPanel({ onLoggedIn }) {
     setLoading(true);
     try {
       // Devise expects: { user: { email, password } }
-      await apiFetch("/users/sign_in", {
+      await apiFetch("/users/sign_in.json", {
         method: "POST",
         body: JSON.stringify({ user: { email, password } }),
       });
@@ -260,20 +271,20 @@ export default function App() {
     });
     const path = customPath || `/loads${query.toString() ? `?${query.toString()}` : ""}`;
     const data = await appFetch(path);
-    setLoads(data || []);
+    setLoads(toList(data));
   }
 
   async function fetchLookups() {
     const cs = await appFetch("/customers");
     const ds = await appFetch("/drivers");
-    setCustomers(cs || []);
-    setDrivers(ds || []);
+    setCustomers(toList(cs));
+    setDrivers(toList(ds));
   }
 
   async function fetchMe() {
     const data = await appFetch("/me");
-    setRole(data?.user?.role || null);
-    return data?.user || null;
+    setRole(data?.user?.role || data?.role || null);
+    return data?.user || data || null;
   }
 
   async function openLoad(id) {
