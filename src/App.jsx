@@ -7,6 +7,7 @@ const API = (import.meta.env.VITE_API_URL || "https://load-tracker-db.onrender.c
 const USE_API_CREDENTIALS = import.meta.env.VITE_API_CREDENTIALS !== "false";
 const REQUIRE_AUTH = import.meta.env.VITE_REQUIRE_AUTH === "true";
 const THEME_STORAGE_KEY = "load_tracker_theme";
+const DEMO_MODE_STORAGE_KEY = "load_tracker_demo_mode";
 const THEME_TRANSITION = "background-color 200ms ease, border-color 200ms ease, color 200ms ease, box-shadow 200ms ease";
 const DEFAULT_THEME_MODE = "system";
 
@@ -134,6 +135,14 @@ function getThemeMode(savedMode) {
   return normalizeThemeMode(savedMode);
 }
 
+function getDemoModePreference() {
+  if (typeof window === "undefined") return null;
+  const saved = window.localStorage.getItem(DEMO_MODE_STORAGE_KEY);
+  if (saved === "on") return true;
+  if (saved === "off") return false;
+  return null;
+}
+
 function getResolvedThemeMode(mode, systemPrefersDark) {
   if (mode === "light") return false;
   if (mode === "dark") return true;
@@ -142,6 +151,118 @@ function getResolvedThemeMode(mode, systemPrefersDark) {
 
 function useTheme() {
   return useContext(ThemeContext);
+}
+
+function ConfirmModal({
+  isOpen,
+  onConfirm,
+  onCancel,
+  title,
+  description,
+  confirmText,
+  cancelText = "Cancel",
+  confirmButtonId = "confirm-action",
+  titleId = "confirm-title",
+  descriptionId = "confirm-description",
+  returnFocusRef,
+  confirmVariant = "primary",
+}) {
+  const theme = useTheme();
+  const modalRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    function handleEscapeKey(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onCancel();
+    }
+
+    window.addEventListener("keydown", handleEscapeKey);
+    return () => window.removeEventListener("keydown", handleEscapeKey);
+  }, [isOpen, onCancel]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = setTimeout(() => {
+      modalRef.current?.querySelector(`#${confirmButtonId}`)?.focus();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [isOpen, confirmButtonId]);
+
+  useEffect(() => {
+    if (isOpen) return;
+    if (!returnFocusRef?.current) return;
+    returnFocusRef.current.focus();
+  }, [isOpen, returnFocusRef]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      onClick={onCancel}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 20,
+      }}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        ref={modalRef}
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          const modal = modalRef.current;
+          if (!modal) return;
+          const focusables = Array.from(modal.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+            .filter((node) => {
+              if (node.disabled) return false;
+              const style = window.getComputedStyle(node);
+              return style.display !== "none" && style.visibility !== "hidden";
+            });
+          if (focusables.length === 0) {
+            event.preventDefault();
+            return;
+          }
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          const active = document.activeElement;
+          if (event.shiftKey && active === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
+        style={{
+          width: "min(460px, 92vw)",
+          background: theme.panelBg,
+          border: `1px solid ${theme.border}`,
+          borderRadius: 14,
+          padding: 16,
+          boxShadow: theme.shadow,
+          color: theme.text,
+        }}
+      >
+        <div id={titleId} style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>{title}</div>
+        <div id={descriptionId} style={{ color: theme.muted, marginBottom: 12 }}>{description}</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <Button variant="ghost" onClick={onCancel}>{cancelText}</Button>
+          <Button id={confirmButtonId} variant={confirmVariant} onClick={onConfirm}>{confirmText}</Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function toList(data) {
@@ -240,24 +361,107 @@ function StatusPill({ status }) {
   );
 }
 
-function Button({ children, onClick, type = "button", disabled, variant = "default", style }) {
+function Button({ children, onClick, type = "button", disabled, variant = "default", style, ...buttonProps }) {
   const theme = useTheme();
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [showFocusRing, setShowFocusRing] = useState(false);
+  const [focusByPointer, setFocusByPointer] = useState(false);
+  const isDisabled = Boolean(disabled);
+  const baseButtonBg =
+    variant === "danger" ? theme.danger :
+    variant === "primary" ? theme.buttonPrimaryBg :
+    variant === "ghost" ? "transparent" :
+    theme.buttonBg;
+  const baseButtonText =
+    variant === "danger" ? "#ffffff" :
+    variant === "primary" ? theme.buttonPrimaryText :
+    variant === "ghost" ? theme.text : theme.buttonText;
+  const baseButtonBorder =
+    variant === "danger" ? theme.danger :
+    variant === "ghost" ? "transparent" :
+    theme.border;
+
+  const hoverButtonBg =
+    variant === "danger" ? (theme.danger === "#f87171" ? "#ef4444" : "#991b1b") :
+    variant === "primary" ? (theme.buttonPrimaryBg === "#111827" ? "#1f2937" : "#3b82f6") :
+    variant === "ghost" ? theme.skeleton :
+    theme.skeleton;
+  const hoverButtonText =
+    variant === "ghost" ? theme.text : baseButtonText;
+  const hoverButtonBorder =
+    variant === "danger" ? (theme.danger === "#f87171" ? "#ef4444" : "#991b1b") :
+    variant === "ghost" ? theme.borderStrong :
+    theme.border;
+  const activeButtonBg =
+    variant === "danger" ? (theme.danger === "#f87171" ? "#dc2626" : "#7f1d1d") :
+    variant === "primary" ? (theme.buttonPrimaryBg === "#111827" ? "#0f172a" : "#2563eb") :
+    variant === "ghost" ? theme.muted :
+    theme.borderStrong;
+  const activeButtonText =
+    variant === "ghost" ? theme.text : baseButtonText;
+  const activeButtonBorder =
+    variant === "danger" ? (theme.danger === "#f87171" ? "#dc2626" : "#7f1d1d") :
+    variant === "ghost" ? theme.borderStrong :
+    theme.borderStrong;
+  const focusRing =
+    variant === "danger" ? `${theme.danger}66` : theme.buttonPrimaryBg === "#111827"
+      ? "rgba(96,165,250,0.35)"
+      : "rgba(37,99,235,0.25)";
+
   const buttonStyle = {
-    border: `1px solid ${theme.border}`,
+    border: `1px solid ${pressed && !isDisabled ? activeButtonBorder : hovered && !isDisabled ? hoverButtonBorder : baseButtonBorder}`,
     padding: "10px 12px",
     borderRadius: 12,
-    background: variant === "primary" ? theme.buttonPrimaryBg : theme.buttonBg,
-    color: variant === "primary" ? theme.buttonPrimaryText : theme.buttonText,
-    cursor: disabled ? "not-allowed" : "pointer",
-    transition: theme.transition,
-    opacity: disabled ? 0.65 : 1,
+    background: pressed && !isDisabled ? activeButtonBg : hovered && !isDisabled ? hoverButtonBg : baseButtonBg,
+    color: pressed && !isDisabled ? activeButtonText : hovered && !isDisabled ? hoverButtonText : baseButtonText,
+    transform: pressed && !isDisabled ? "translateY(1px)" : "none",
+    outline: "none",
+    boxShadow: showFocusRing && !isDisabled ? `0 0 0 3px ${focusRing}` : "none",
+    cursor: isDisabled ? "not-allowed" : "pointer",
+    transition: `${theme.transition}, transform 120ms ease`,
+    opacity: isDisabled ? 0.65 : 1,
   };
   return (
     <button
       type={type}
       onClick={onClick}
-      disabled={disabled}
+      disabled={isDisabled}
+      onMouseEnter={() => !isDisabled && setHovered(true)}
+      onMouseLeave={() => {
+        setHovered(false);
+        setPressed(false);
+      }}
+      onFocus={() => {
+        if (isDisabled) return;
+        setHovered(true);
+        setFocused(true);
+        setShowFocusRing(!focusByPointer);
+      }}
+      onBlur={() => {
+        setHovered(false);
+        setPressed(false);
+        setShowFocusRing(false);
+        setFocused(false);
+        setFocusByPointer(false);
+      }}
+      onMouseDown={() => {
+        if (isDisabled) return;
+        setFocusByPointer(true);
+        setShowFocusRing(false);
+        setPressed(true);
+      }}
+      onMouseUp={() => setPressed(false)}
+      onTouchStart={() => {
+        if (isDisabled) return;
+        setFocusByPointer(true);
+        setPressed(true);
+      }}
+      onTouchEnd={() => setPressed(false)}
+      onTouchCancel={() => setPressed(false)}
       aria-busy={disabled || undefined}
+      {...buttonProps}
       style={{ ...buttonStyle, ...style }}
     >
       {children}
@@ -421,7 +625,16 @@ function LoginPanel({ onLoggedIn }) {
 export default function App() {
   const activeRequests = useRef(0);
   const [authed, setAuthed] = useState(!REQUIRE_AUTH);
+  const [demoMode, setDemoMode] = useState(() => {
+    const overridden = getDemoModePreference();
+    return REQUIRE_AUTH ? false : (overridden ?? true);
+  });
+  const [showExitDemoConfirm, setShowExitDemoConfirm] = useState(false);
+  const exitDemoTriggerRef = useRef(null);
+  const [showCancelStatusConfirm, setShowCancelStatusConfirm] = useState(false);
+  const cancelStatusActionTriggerRef = useRef(null);
   const [role, setRole] = useState(REQUIRE_AUTH ? null : "dispatcher");
+  const requireAuth = REQUIRE_AUTH || demoMode;
   const [themeMode, setThemeMode] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_THEME_MODE;
     return getThemeMode(window.localStorage.getItem(THEME_STORAGE_KEY));
@@ -476,6 +689,14 @@ export default function App() {
       setThemeMode(normalized);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const overridden = getDemoModePreference();
+    if (!REQUIRE_AUTH && overridden !== demoMode) {
+      setDemoMode(overridden ?? true);
+    }
+  }, [REQUIRE_AUTH, demoMode]);
 
   useEffect(() => {
     if (themeMode !== "system") return;
@@ -560,8 +781,14 @@ export default function App() {
   async function addStatusEvent() {
     if (!selectedLoad?.id) return;
     if (newStatus === "canceled") {
-      if (!confirm("Cancel this load?")) return;
+      setShowCancelStatusConfirm(true);
+      return;
     }
+    await saveStatusEvent();
+  }
+
+  async function saveStatusEvent() {
+    if (!selectedLoad?.id) return;
 
     await appFetch(`/loads/${selectedLoad.id}/status_events`, {
       method: "POST",
@@ -575,6 +802,15 @@ export default function App() {
 
     await refreshSelectedLoad();
     await refreshAll();
+  }
+
+  async function confirmCancelStatusEvent() {
+    setShowCancelStatusConfirm(false);
+    await saveStatusEvent();
+  }
+
+  function cancelCancelStatusEvent() {
+    setShowCancelStatusConfirm(false);
   }
 
   async function createLoad() {
@@ -635,7 +871,7 @@ export default function App() {
       setAuthed(true);
       setRole(me?.user?.role || me?.role || null);
     } catch (error) {
-      if (REQUIRE_AUTH) {
+      if (requireAuth) {
         setAuthed(false);
         setRole(null);
         setDashboard(null);
@@ -683,14 +919,39 @@ export default function App() {
     setSelectedLoad(null);
   }
 
+  function exitDemoMode() {
+    setShowExitDemoConfirm(true);
+  }
+
+  function confirmExitDemoMode() {
+    if (typeof window === "undefined") {
+      setShowExitDemoConfirm(false);
+      return;
+    }
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(DEMO_MODE_STORAGE_KEY, "off");
+    setDemoMode(false);
+    setAuthed(false);
+    setRole(null);
+    setDashboard(null);
+    setLoads([]);
+    setSelectedLoad(null);
+    setBanner("Demo mode disabled. Please sign in.");
+    setShowExitDemoConfirm(false);
+  }
+
+  function cancelExitDemoMode() {
+    setShowExitDemoConfirm(false);
+  }
+
   useEffect(() => {
     (async () => {
       try {
         await refreshAll();
-        if (!REQUIRE_AUTH) setAuthed(true);
+        if (!requireAuth) setAuthed(true);
       } catch {
         setBanner("Could not connect to API. Check API URL/CORS/backend status.");
-        if (REQUIRE_AUTH) {
+        if (requireAuth) {
           setAuthed(false);
           setRole(null);
         }
@@ -716,7 +977,7 @@ export default function App() {
     return Object.entries(dashboard.breakdowns.by_status).map(([name, count]) => ({ name, count }));
   }, [dashboard]);
 
-  if (REQUIRE_AUTH && !authed) {
+  if (requireAuth && !authed) {
     return (
       <ThemeContext.Provider value={theme}>
         <div style={{ background: theme.pageBg, minHeight: "100vh", color: theme.text, transition: theme.transition }}>
@@ -774,6 +1035,34 @@ export default function App() {
         transition: theme.transition,
       }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: 24, transition: theme.transition }}>
+          <ConfirmModal
+            isOpen={showExitDemoConfirm}
+            onConfirm={confirmExitDemoMode}
+            onCancel={cancelExitDemoMode}
+            title="Exit demo mode?"
+            description="This will disable demo mode and return the app to login-required behavior."
+            confirmText="Yes, exit"
+            confirmButtonId="exit-demo-confirm-action"
+            titleId="exit-demo-title"
+            descriptionId="exit-demo-description"
+            returnFocusRef={exitDemoTriggerRef}
+          />
+
+          <ConfirmModal
+            isOpen={showCancelStatusConfirm}
+            onConfirm={confirmCancelStatusEvent}
+            onCancel={cancelCancelStatusEvent}
+            title="Cancel this load?"
+            description="This action will record a canceled status event on the selected load."
+            confirmText="Yes, cancel load"
+            confirmButtonId="cancel-status-confirm-action"
+            titleId="cancel-status-title"
+            descriptionId="cancel-status-description"
+            returnFocusRef={cancelStatusActionTriggerRef}
+            cancelText="Keep editing"
+            confirmVariant="danger"
+          />
+
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
             <div>
               <h1 style={{ margin: 0, fontSize: 28 }}>Load Tracker</h1>
@@ -799,7 +1088,8 @@ export default function App() {
                 </Select>
               </label>
               <Button disabled={loading} onClick={refreshAll}>Refresh</Button>
-              {REQUIRE_AUTH ? <Button disabled={loading} onClick={logout}>Logout</Button> : null}
+              {requireAuth ? <Button ref={exitDemoTriggerRef} disabled={loading} onClick={exitDemoMode}>Exit demo mode</Button> : null}
+              {requireAuth ? <Button disabled={loading} onClick={logout}>Sign out</Button> : null}
             </div>
           </div>
 
@@ -1035,7 +1325,7 @@ export default function App() {
                   </div>
 
                   <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
-                    <Button disabled={loading} variant="primary" onClick={addStatusEvent}>Save status</Button>
+                    <Button ref={cancelStatusActionTriggerRef} disabled={loading} variant="primary" onClick={addStatusEvent}>Save status</Button>
                     <Button disabled={loading} onClick={refreshSelectedLoad}>Refresh</Button>
                   </div>
 
